@@ -81,8 +81,9 @@ async function findSubscribers(productId, variantId) {
       }
     }
 
-    // Fetch profile emails
+    // Fetch profile emails and dedupe by email
     const subscribers = [];
+    const seenEmails = new Set();
 
     for (const profileId of profileIds) {
       try {
@@ -92,8 +93,9 @@ async function findSubscribers(productId, variantId) {
 
         if (profileRes.ok) {
           const profileData = await profileRes.json();
-          const email = profileData.data?.attributes?.email;
-          if (email) {
+          const email = profileData.data?.attributes?.email?.toLowerCase();
+          if (email && !seenEmails.has(email)) {
+            seenEmails.add(email);
             subscribers.push({ profileId, email });
           }
         }
