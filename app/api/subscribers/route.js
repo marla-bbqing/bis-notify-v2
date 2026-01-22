@@ -160,17 +160,22 @@ async function getShopifyCustomerId(email) {
   }
 }
 
-// Fetch product inventory from Shopify
-async function getInventory(productId) {
+// Fetch product inventory and SKU from Shopify
+async function getProductData(productId, variantId) {
   const domain = process.env.SHOPIFY_STORE_DOMAIN;
   const token = process.env.SHOPIFY_ADMIN_TOKEN;
 
-  if (!domain || !token || !productId) return null;
+  if (!domain || !token || !productId) return { inventory: null, sku: null };
 
   // Extract numeric ID from GID format
   let numericId = productId;
   if (productId.includes('gid://')) {
     numericId = productId.split('/').pop();
+  }
+
+  let numericVariantId = variantId;
+  if (variantId && variantId.includes('gid://')) {
+    numericVariantId = variantId.split('/').pop();
   }
 
   try {
@@ -185,14 +190,25 @@ async function getInventory(productId) {
       }
     );
 
-    if (!res.ok) return null;
+    if (!res.ok) return { inventory: null, sku: null };
 
     const data = await res.json();
     const variants = data.product?.variants || [];
 
-    return variants.reduce((sum, v) => sum + (v.inventory_quantity || 0), 0);
+    const inventory = variants.reduce((sum, v) => sum + (v.inventory_quantity || 0), 0);
+
+    // Get SKU - prefer matching variant, fall back to first
+    let sku = null;
+    if (numericVariantId) {
+      const matchingVariant = variants.find(v => String(v.id) === String(numericVariantId));
+      sku = matchingVariant?.sku || variants[0]?.sku || null;
+    } else {
+      sku = variants[0]?.sku || null;
+    }
+
+    return { inventory, sku };
   } catch {
-    return null;
+    return { inventory: null, sku: null };
   }
 }
 
@@ -240,7 +256,7 @@ export async function GET() {
             new Date(a.date) > new Date(signup.signupDate)
           );
 
-          const inventory = await getInventory(signup.productId);
+          const { inventory, sku } = await getProductData(signup.productId, signup.variantId);
 
           subscribers.push({
             id: `${profile.id}-${signup.productId}-${signup.signupDate}`,
@@ -254,6 +270,7 @@ export async function GET() {
             signupDate: signup.signupDate,
             alertSent,
             inventory,
+            sku,
             shopifyCustomerId,
           });
         }
@@ -271,6 +288,7 @@ export async function GET() {
           signupDate: profile.attributes?.created || null,
           alertSent: false,
           inventory: null,
+          sku: null,
           shopifyCustomerId,
         });
       }

@@ -8,6 +8,7 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [mounted, setMounted] = useState(false);
+  const [countdown, setCountdown] = useState(300); // 5 minutes in seconds
 
   const fetchData = async () => {
     setLoading(true);
@@ -29,8 +30,20 @@ export default function Dashboard() {
     fetchData();
 
     // Auto-refresh every 5 minutes
-    const interval = setInterval(fetchData, 5 * 60 * 1000);
-    return () => clearInterval(interval);
+    const refreshInterval = setInterval(() => {
+      fetchData();
+      setCountdown(300);
+    }, 5 * 60 * 1000);
+
+    // Countdown timer
+    const countdownInterval = setInterval(() => {
+      setCountdown(prev => prev > 0 ? prev - 1 : 300);
+    }, 1000);
+
+    return () => {
+      clearInterval(refreshInterval);
+      clearInterval(countdownInterval);
+    };
   }, []);
 
   const filtered = subscribers.filter((sub) => {
@@ -38,7 +51,8 @@ export default function Dashboard() {
     const term = search.toLowerCase();
     return (
       sub.email?.toLowerCase().includes(term) ||
-      sub.productTitle?.toLowerCase().includes(term)
+      sub.productTitle?.toLowerCase().includes(term) ||
+      sub.sku?.toLowerCase().includes(term)
     );
   });
 
@@ -51,6 +65,12 @@ export default function Dashboard() {
     } catch {
       return '-';
     }
+  };
+
+  const formatCountdown = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   if (!mounted) {
@@ -102,7 +122,7 @@ export default function Dashboard() {
           <span><strong>{filtered.length}</strong> subscribers</span>
           <input
             type="text"
-            placeholder="Search email or product..."
+            placeholder="Search email, product, or SKU..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{
@@ -148,7 +168,14 @@ export default function Dashboard() {
                       {sub.name && <div style={{ fontSize: 13, color: '#6b7280' }}>{sub.name}</div>}
                     </td>
                     <td style={tdStyle}>
-                      {sub.productTitle || <span style={{ color: '#9ca3af' }}>-</span>}
+                      {sub.productTitle ? (
+                        <>
+                          <div>{sub.productTitle}</div>
+                          {sub.sku && <div style={{ fontSize: 12, color: '#6b7280' }}>SKU: {sub.sku}</div>}
+                        </>
+                      ) : (
+                        <span style={{ color: '#9ca3af' }}>-</span>
+                      )}
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'center' }}>
                       {formatDate(sub.signupDate)}
@@ -220,8 +247,12 @@ export default function Dashboard() {
       </div>
 
       <footer style={{ marginTop: 16, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>
+        <span style={{ marginRight: 8 }}>
+          Auto-refresh in <strong>{formatCountdown(countdown)}</strong>
+        </span>
+        {' • '}
         <button
-          onClick={() => { fetchData(); }}
+          onClick={() => { fetchData(); setCountdown(300); }}
           style={{
             background: 'none',
             border: 'none',
