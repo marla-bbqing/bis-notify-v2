@@ -87,7 +87,7 @@ export default function Dashboard() {
       <header style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8 }}>Back in Stock Dashboard</h1>
         <p style={{ color: '#666', margin: 0 }}>
-          Customers who signed up for back-in-stock notifications
+          Customers who signed up to be notified once pre-order products are in stock
         </p>
       </header>
 
