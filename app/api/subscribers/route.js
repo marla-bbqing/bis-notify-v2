@@ -132,6 +132,34 @@ async function getAlertEvents() {
   }
 }
 
+// Look up Shopify customer ID by email
+async function getShopifyCustomerId(email) {
+  const domain = process.env.SHOPIFY_STORE_DOMAIN;
+  const token = process.env.SHOPIFY_ADMIN_TOKEN;
+
+  if (!domain || !token || !email) return null;
+
+  try {
+    const res = await fetch(
+      `https://${domain}/admin/api/2024-01/customers/search.json?query=email:${encodeURIComponent(email)}`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Access-Token': token,
+        },
+        cache: 'no-store',
+      }
+    );
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    return data.customers?.[0]?.id || null;
+  } catch {
+    return null;
+  }
+}
+
 // Fetch product inventory from Shopify
 async function getInventory(productId) {
   const domain = process.env.SHOPIFY_STORE_DOMAIN;
@@ -201,6 +229,7 @@ export async function GET() {
 
       const signups = signupsByProfile.get(profile.id) || [];
       const alerts = alertsByProfile.get(profile.id) || [];
+      const shopifyCustomerId = await getShopifyCustomerId(email);
 
       // If we have signup events, create a row for each
       if (signups.length > 0) {
@@ -225,6 +254,7 @@ export async function GET() {
             signupDate: signup.signupDate,
             alertSent,
             inventory,
+            shopifyCustomerId,
           });
         }
       } else {
@@ -241,6 +271,7 @@ export async function GET() {
           signupDate: profile.attributes?.created || null,
           alertSent: false,
           inventory: null,
+          shopifyCustomerId,
         });
       }
     }

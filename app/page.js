@@ -179,7 +179,10 @@ export default function Dashboard() {
                           </a>
                         )}
                         <a
-                          href={`https://admin.shopify.com/store/bbqing-com/customers?query=${encodeURIComponent(sub.email)}`}
+                          href={sub.shopifyCustomerId
+                            ? `https://admin.shopify.com/store/bbqing-com/customers/${sub.shopifyCustomerId}`
+                            : `https://admin.shopify.com/store/bbqing-com/customers?query=${encodeURIComponent(sub.email)}`
+                          }
                           target="_blank"
                           rel="noopener noreferrer"
                           style={{ ...linkStyle, backgroundColor: '#e0e7ff', color: '#3730a3' }}
