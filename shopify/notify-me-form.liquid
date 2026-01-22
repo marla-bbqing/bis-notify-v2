@@ -1,0 +1,250 @@
+{%- comment -%}
+  ============================================================
+  BACK IN STOCK NOTIFY ME FORM
+  ============================================================
+
+  Shows on variants with metafield: custom.variant_sub_status = "PRE"
+
+  HOW IT WORKS:
+  1. Customer fills out email on pre-order product
+  2. Form submits to Klaviyo creating "Back In Stock Signup" event
+  3. Customer is added to your BIS list
+  4. When inventory restocks, Shopify Flow calls your webhook
+  5. Webhook creates "Back In Stock Alert" event in Klaviyo
+  6. Klaviyo Flow triggers email to customer
+
+  USAGE: {% render 'notify-me-form', product: product %}
+
+  REQUIREMENTS:
+  - Klaviyo account with public API key
+  - Klaviyo list for BIS signups
+  - Products with custom.variant_sub_status = "PRE" metafield
+{%- endcomment -%}
+
+{%- comment -%} ========== CONFIGURATION ========== {%- endcomment -%}
+{%- assign KLAVIYO_PUBLIC_KEY = 'M5syCG' -%}
+{%- assign KLAVIYO_LIST_ID = 'XMVuS6' -%}
+
+{%- comment -%} ========== FIND PRE-ORDER VARIANTS ========== {%- endcomment -%}
+{%- assign pre_variant_ids = '' -%}
+{%- for variant in product.variants -%}
+  {%- if variant.metafields.custom.variant_sub_status == 'PRE' -%}
+    {%- if pre_variant_ids != '' -%}
+      {%- assign pre_variant_ids = pre_variant_ids | append: ',' -%}
+    {%- endif -%}
+    {%- assign pre_variant_ids = pre_variant_ids | append: variant.id -%}
+  {%- endif -%}
+{%- endfor -%}
+
+{%- comment -%} Only render if product has pre-order variants {%- endcomment -%}
+{%- if pre_variant_ids != '' -%}
+
+{%- assign selected_variant = product.selected_or_first_available_variant -%}
+{%- assign show_initially = false -%}
+{%- if selected_variant.metafields.custom.variant_sub_status == 'PRE' -%}
+  {%- assign show_initially = true -%}
+{%- endif -%}
+
+<style>
+  .bis-form-box{width:100%;margin:1rem 0;padding:1rem;border:1px solid #e5e5e5;border-radius:6px;background:#fafafa;box-sizing:border-box}
+  .bis-form-row{display:flex;gap:.5rem;width:100%}
+  .bis-form-input{flex:1;padding:.625rem .875rem;border:1px solid #ccc;border-radius:4px;font-size:.9rem;min-width:0}
+  .bis-form-btn{padding:.625rem 1.25rem;background:#000;color:#fff;border:none;border-radius:4px;font-size:.9rem;cursor:pointer;white-space:nowrap}
+  .bis-form-btn:hover{background:#333}
+  .bis-form-btn:disabled{background:#999;cursor:not-allowed}
+  .bis-form-error{margin:.5rem 0 0;color:#c00;font-size:.85rem;display:none}
+  .bis-form-success{margin:0;color:#080;font-size:.9rem}
+</style>
+
+<div class="bis-form-box"
+     id="bis-form-{{ product.id }}"
+     data-pre-variants="{{ pre_variant_ids }}"
+     data-product-id="{{ product.id }}"
+     data-product-handle="{{ product.handle }}"
+     data-product-title="{{ product.title | escape }}"
+     data-product-url="{{ shop.url }}/products/{{ product.handle }}"
+     data-product-image="{{ product.featured_image | image_url: width: 400 }}"
+     data-variant-id="{{ selected_variant.id }}"
+     style="{% unless show_initially %}display:none;{% endunless %}">
+
+  <div class="bis-form-content">
+    <p style="margin:0 0 .75rem;font-size:.9rem;font-weight:600">
+      Get notified when this item is in stock
+    </p>
+
+    <div class="bis-form-row">
+      <input
+        type="email"
+        name="email"
+        placeholder="Enter your email"
+        class="bis-form-input"
+        autocomplete="email"
+        required
+      >
+      <button type="button" class="bis-form-btn" data-bis-submit>Notify Me</button>
+    </div>
+
+    <p class="bis-form-error"></p>
+  </div>
+
+  <div class="bis-form-done" style="display:none">
+    <p class="bis-form-success">You're on the list! We'll email you when this item is back in stock.</p>
+  </div>
+</div>
+
+<script type="module">
+(function() {
+  const KLAVIYO_KEY = '{{ KLAVIYO_PUBLIC_KEY }}';
+  const KLAVIYO_LIST = '{{ KLAVIYO_LIST_ID }}';
+
+  function init() {
+    document.querySelectorAll('[data-bis-submit]').forEach(btn => {
+      if (btn.dataset.ready) return;
+      btn.dataset.ready = 'true';
+
+      btn.addEventListener('click', async () => {
+        const box = btn.closest('.bis-form-box');
+        const content = box.querySelector('.bis-form-content');
+        const done = box.querySelector('.bis-form-done');
+        const error = box.querySelector('.bis-form-error');
+        const input = box.querySelector('input[name="email"]');
+
+        const email = input.value.trim();
+
+        // Validate email
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          error.textContent = 'Please enter a valid email address.';
+          error.style.display = 'block';
+          return;
+        }
+
+        // Get product data from box attributes
+        const productId = box.dataset.productId;
+        const productHandle = box.dataset.productHandle;
+        const productTitle = box.dataset.productTitle;
+        const productUrl = box.dataset.productUrl;
+        const productImage = box.dataset.productImage;
+        const variantId = box.dataset.variantId;
+
+        // Loading state
+        btn.disabled = true;
+        btn.textContent = '...';
+        error.style.display = 'none';
+
+        try {
+          // 1. Subscribe to Klaviyo list
+          const subRes = await fetch(`https://a.klaviyo.com/client/subscriptions/?company_id=${KLAVIYO_KEY}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'revision': '2024-02-15' },
+            body: JSON.stringify({
+              data: {
+                type: 'subscription',
+                attributes: {
+                  custom_source: 'Back In Stock Form',
+                  profile: {
+                    data: {
+                      type: 'profile',
+                      attributes: { email }
+                    }
+                  }
+                },
+                relationships: {
+                  list: { data: { type: 'list', id: KLAVIYO_LIST } }
+                }
+              }
+            })
+          });
+
+          if (!subRes.ok && subRes.status !== 202) {
+            throw new Error('Subscription failed');
+          }
+
+          // 2. Track "Back In Stock Signup" event (this is for tracking, NOT for triggering emails)
+          await fetch(`https://a.klaviyo.com/client/events/?company_id=${KLAVIYO_KEY}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'revision': '2024-02-15' },
+            body: JSON.stringify({
+              data: {
+                type: 'event',
+                attributes: {
+                  metric: { data: { type: 'metric', attributes: { name: 'Back In Stock Signup' } } },
+                  profile: { data: { type: 'profile', attributes: { email } } },
+                  properties: {
+                    ProductID: productId,
+                    ProductHandle: productHandle,
+                    ProductTitle: productTitle,
+                    ProductURL: productUrl,
+                    ProductImage: productImage,
+                    VariantID: variantId,
+                    SignupDate: new Date().toISOString()
+                  }
+                }
+              }
+            })
+          });
+
+          // Show success
+          content.style.display = 'none';
+          done.style.display = 'block';
+
+        } catch (err) {
+          console.error('BIS Form error:', err);
+          error.textContent = 'Something went wrong. Please try again.';
+          error.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Notify Me';
+        }
+      });
+    });
+  }
+
+  // Show/hide form when variant changes
+  function setupVariantListener() {
+    const boxes = document.querySelectorAll('.bis-form-box');
+
+    boxes.forEach(box => {
+      const preVariants = box.dataset.preVariants.split(',');
+
+      const updateVisibility = (variantId) => {
+        if (!variantId) return;
+        const id = variantId.toString();
+
+        if (preVariants.includes(id)) {
+          box.style.display = '';
+          box.dataset.variantId = id;
+        } else {
+          box.style.display = 'none';
+        }
+      };
+
+      // Listen for variant select changes
+      document.addEventListener('change', (e) => {
+        const select = e.target.closest('[name="id"], [data-variants]');
+        if (select) updateVisibility(select.value);
+      });
+
+      // Listen for URL changes
+      window.addEventListener('popstate', () => {
+        const params = new URLSearchParams(window.location.search);
+        const vid = params.get('variant');
+        if (vid) updateVisibility(vid);
+      });
+
+      // Listen for custom variant events (theme-specific)
+      document.addEventListener('variant:change', (e) => {
+        updateVisibility(e.detail?.variant?.id);
+      });
+    });
+  }
+
+  // Initialize when ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => { init(); setupVariantListener(); });
+  } else {
+    init();
+    setupVariantListener();
+  }
+})();
+</script>
+
+{%- endif -%}
