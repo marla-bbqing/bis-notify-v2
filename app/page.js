@@ -143,6 +143,7 @@ export default function Dashboard() {
                 <th style={thStyle}>Product</th>
                 <th style={{ ...thStyle, textAlign: 'center' }}>Signed Up</th>
                 <th style={{ ...thStyle, textAlign: 'center' }}>Alert Sent</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Ordered</th>
                 <th style={{ ...thStyle, textAlign: 'center' }}>Inventory</th>
                 <th style={thStyle}>Actions</th>
               </tr>
@@ -150,13 +151,13 @@ export default function Dashboard() {
             <tbody>
               {loading && subscribers.length === 0 ? (
                 <tr>
-                  <td colSpan="6" style={{ padding: 48, textAlign: 'center', color: '#9ca3af' }}>
+                  <td colSpan="7" style={{ padding: 48, textAlign: 'center', color: '#9ca3af' }}>
                     Loading...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan="6" style={{ padding: 48, textAlign: 'center', color: '#9ca3af' }}>
+                  <td colSpan="7" style={{ padding: 48, textAlign: 'center', color: '#9ca3af' }}>
                     No subscribers found
                   </td>
                 </tr>
@@ -182,6 +183,9 @@ export default function Dashboard() {
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'center' }}>
                       <Badge yes={sub.alertSent} />
+                    </td>
+                    <td style={{ ...tdStyle, textAlign: 'center' }}>
+                      <Badge yes={sub.ordered} />
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'center' }}>
                       {sub.inventory !== null ? (

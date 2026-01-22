@@ -132,6 +132,57 @@ async function getAlertEvents() {
   }
 }
 
+// Check if customer ordered a specific product after signup date
+async function checkIfOrdered(email, productId, signupDate) {
+  const domain = process.env.SHOPIFY_STORE_DOMAIN;
+  const token = process.env.SHOPIFY_ADMIN_TOKEN;
+
+  if (!domain || !token || !email || !productId) return false;
+
+  // Normalize product ID
+  let numericProductId = productId;
+  if (productId.includes('gid://')) {
+    numericProductId = productId.split('/').pop();
+  }
+
+  try {
+    // Search for orders by this email
+    const res = await fetch(
+      `https://${domain}/admin/api/2024-01/orders.json?email=${encodeURIComponent(email)}&status=any&limit=50`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Access-Token': token,
+        },
+        cache: 'no-store',
+      }
+    );
+
+    if (!res.ok) return false;
+
+    const data = await res.json();
+    const orders = data.orders || [];
+
+    const signupTime = signupDate ? new Date(signupDate).getTime() : 0;
+
+    // Check if any order after signup contains this product
+    for (const order of orders) {
+      const orderTime = new Date(order.created_at).getTime();
+      if (orderTime < signupTime) continue; // Order was before signup
+
+      for (const item of order.line_items || []) {
+        if (String(item.product_id) === String(numericProductId)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 // Look up Shopify customer ID by email
 async function getShopifyCustomerId(email) {
   const domain = process.env.SHOPIFY_STORE_DOMAIN;
@@ -257,6 +308,7 @@ export async function GET() {
           );
 
           const { inventory, sku } = await getProductData(signup.productId, signup.variantId);
+          const ordered = await checkIfOrdered(email, signup.productId, signup.signupDate);
 
           subscribers.push({
             id: `${profile.id}-${signup.productId}-${signup.signupDate}`,
@@ -269,6 +321,7 @@ export async function GET() {
             variantId: signup.variantId,
             signupDate: signup.signupDate,
             alertSent,
+            ordered,
             inventory,
             sku,
             shopifyCustomerId,
@@ -287,6 +340,7 @@ export async function GET() {
           variantId: null,
           signupDate: profile.attributes?.created || null,
           alertSent: false,
+          ordered: false,
           inventory: null,
           sku: null,
           shopifyCustomerId,
