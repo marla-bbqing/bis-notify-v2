@@ -436,6 +436,17 @@ export async function GET() {
             variantId: signup.variantId,
             signupDate: signup.signupDate,
             alertSent,
+            _alertDebug: {
+              alertCount: alerts.length,
+              signupDate: signup.signupDate,
+              signupProductId: signup.productId,
+              alerts: alerts.map(a => ({
+                date: a.date,
+                productId: a.productId,
+                afterSignup: new Date(a.date) > new Date(signup.signupDate),
+                productMatch: !a.productId ? 'no-pid-auto-true' : `${normalizeProductId(a.productId)} === ${normalizeProductId(signup.productId)} => ${normalizeProductId(a.productId) === normalizeProductId(signup.productId)}`,
+              })),
+            },
             ordered,
             inventory,
             sku,
