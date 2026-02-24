@@ -84,8 +84,13 @@ function normalizeProductId(id) {
   return str;
 }
 
+// Normalize curly/smart quotes to straight quotes for comparison
+function normalizeQuotes(str) {
+  return str.replace(/[\u2018\u2019\u201A\u201B]/g, "'").replace(/[\u201C\u201D\u201E\u201F]/g, '"');
+}
+
 // Check if a "Back In Stock Alert" was sent for this signup
-// Falls back to checking "Received Email" events if no alert metric exists
+// Checks BOTH the dedicated alert metric AND "Received Email" events, merges results
 async function getAlertEvents() {
   try {
     const metricsRes = await fetch(`${KLAVIYO_API}/metrics/`, {
@@ -97,8 +102,9 @@ async function getAlertEvents() {
 
     const metricsData = await metricsRes.json();
     const allMetrics = metricsData.data || [];
+    const byProfile = new Map();
 
-    // Try the dedicated "Back In Stock Alert" metric first
+    // Source 1: Check the dedicated "Back In Stock Alert" metric
     const alertMetric = allMetrics.find(m =>
       m.attributes?.name?.toLowerCase() === 'back in stock alert'
     );
@@ -113,83 +119,74 @@ async function getAlertEvents() {
         const eventsData = await eventsRes.json();
         const events = eventsData.data || [];
 
-        if (events.length > 0) {
-          const byProfile = new Map();
-          for (const event of events) {
-            const profileId = event.relationships?.profile?.data?.id;
-            if (!profileId) continue;
+        for (const event of events) {
+          const profileId = event.relationships?.profile?.data?.id;
+          if (!profileId) continue;
 
-            const props = event.attributes?.event_properties || {};
+          const props = event.attributes?.event_properties || {};
+          const alert = {
+            productId: props.ProductID || null,
+            date: event.attributes?.datetime || null,
+          };
+
+          if (!byProfile.has(profileId)) byProfile.set(profileId, []);
+          byProfile.get(profileId).push(alert);
+        }
+        console.log(`Found ${events.length} Back In Stock Alert events`);
+      }
+    }
+
+    // Source 2: Also check "Received Email" events for BIS-related subjects
+    const receivedMetric = allMetrics.find(m =>
+      m.attributes?.name?.toLowerCase() === 'received email'
+    );
+
+    if (receivedMetric) {
+      const eventsRes = await fetch(
+        `${KLAVIYO_API}/events/?filter=equals(metric_id,"${receivedMetric.id}")&page[size]=100&sort=-datetime`,
+        { headers: klaviyoHeaders(), cache: 'no-store' }
+      );
+
+      if (eventsRes.ok) {
+        const eventsData = await eventsRes.json();
+        const events = eventsData.data || [];
+
+        for (const event of events) {
+          const profileId = event.relationships?.profile?.data?.id;
+          if (!profileId) continue;
+
+          const props = event.attributes?.event_properties || {};
+          const subject = normalizeQuotes((props.Subject || '').toLowerCase());
+          const preview = normalizeQuotes((props.$internal?.['Preview Text'] || '').toLowerCase());
+
+          const isBisEmail =
+            subject.includes('back in stock') ||
+            subject.includes("it's here") ||
+            subject.includes('ready to order') ||
+            subject.includes('now available') ||
+            subject.includes('in stock') ||
+            subject.includes('restock') ||
+            subject.includes('pre-order') ||
+            subject.includes('preorder') ||
+            preview.includes('back in stock') ||
+            preview.includes('now available') ||
+            preview.includes('in stock') ||
+            preview.includes('restock');
+
+          if (isBisEmail) {
             const alert = {
-              productId: props.ProductID || null,
+              productId: null,
               date: event.attributes?.datetime || null,
             };
 
             if (!byProfile.has(profileId)) byProfile.set(profileId, []);
             byProfile.get(profileId).push(alert);
           }
-          console.log(`Found ${events.length} Back In Stock Alert events`);
-          return byProfile;
         }
       }
     }
 
-    // Fallback: check "Received Email" events for BIS-related subjects
-    console.log('No alert metric/events found, falling back to Received Email matching');
-    const receivedMetric = allMetrics.find(m =>
-      m.attributes?.name?.toLowerCase() === 'received email'
-    );
-
-    if (!receivedMetric) {
-      console.log('No "Received Email" metric found either');
-      return new Map();
-    }
-
-    const eventsRes = await fetch(
-      `${KLAVIYO_API}/events/?filter=equals(metric_id,"${receivedMetric.id}")&page[size]=100&sort=-datetime`,
-      { headers: klaviyoHeaders(), cache: 'no-store' }
-    );
-
-    if (!eventsRes.ok) return new Map();
-
-    const eventsData = await eventsRes.json();
-    const events = eventsData.data || [];
-    const byProfile = new Map();
-
-    for (const event of events) {
-      const profileId = event.relationships?.profile?.data?.id;
-      if (!profileId) continue;
-
-      const props = event.attributes?.event_properties || {};
-      const subject = (props.Subject || '').toLowerCase();
-      const preview = (props.$internal?.['Preview Text'] || '').toLowerCase();
-
-      const isBisEmail =
-        subject.includes('back in stock') ||
-        subject.includes("it's here") ||
-        subject.includes('ready to order') ||
-        subject.includes('now available') ||
-        subject.includes('in stock') ||
-        subject.includes('restock') ||
-        subject.includes('pre-order') ||
-        subject.includes('preorder') ||
-        preview.includes('back in stock') ||
-        preview.includes('now available') ||
-        preview.includes('in stock') ||
-        preview.includes('restock');
-
-      if (isBisEmail) {
-        const alert = {
-          productId: null, // Received Email events don't have product info
-          date: event.attributes?.datetime || null,
-        };
-
-        if (!byProfile.has(profileId)) byProfile.set(profileId, []);
-        byProfile.get(profileId).push(alert);
-      }
-    }
-
-    console.log(`Found BIS-related emails for ${byProfile.size} profiles via Received Email fallback`);
+    console.log(`Total alert data for ${byProfile.size} profiles`);
     return byProfile;
   } catch (error) {
     console.error('Error fetching alert events:', error);
