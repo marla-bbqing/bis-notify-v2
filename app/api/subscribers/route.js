@@ -76,7 +76,16 @@ async function getSignupEvents() {
   }
 }
 
+// Normalize product ID to numeric string for comparison
+function normalizeProductId(id) {
+  if (!id) return null;
+  const str = String(id);
+  if (str.includes('gid://')) return str.split('/').pop();
+  return str;
+}
+
 // Check if a "Back In Stock Alert" was sent for this signup
+// Falls back to checking "Received Email" events if no alert metric exists
 async function getAlertEvents() {
   try {
     const metricsRes = await fetch(`${KLAVIYO_API}/metrics/`, {
@@ -87,17 +96,57 @@ async function getAlertEvents() {
     if (!metricsRes.ok) return new Map();
 
     const metricsData = await metricsRes.json();
-    const alertMetric = (metricsData.data || []).find(m =>
+    const allMetrics = metricsData.data || [];
+
+    // Try the dedicated "Back In Stock Alert" metric first
+    const alertMetric = allMetrics.find(m =>
       m.attributes?.name?.toLowerCase() === 'back in stock alert'
     );
 
-    if (!alertMetric) {
-      console.log('No "Back In Stock Alert" metric found');
+    if (alertMetric) {
+      const eventsRes = await fetch(
+        `${KLAVIYO_API}/events/?filter=equals(metric_id,"${alertMetric.id}")&page[size]=100&sort=-datetime`,
+        { headers: klaviyoHeaders(), cache: 'no-store' }
+      );
+
+      if (eventsRes.ok) {
+        const eventsData = await eventsRes.json();
+        const events = eventsData.data || [];
+
+        if (events.length > 0) {
+          const byProfile = new Map();
+          for (const event of events) {
+            const profileId = event.relationships?.profile?.data?.id;
+            if (!profileId) continue;
+
+            const props = event.attributes?.event_properties || {};
+            const alert = {
+              productId: props.ProductID || null,
+              date: event.attributes?.datetime || null,
+            };
+
+            if (!byProfile.has(profileId)) byProfile.set(profileId, []);
+            byProfile.get(profileId).push(alert);
+          }
+          console.log(`Found ${events.length} Back In Stock Alert events`);
+          return byProfile;
+        }
+      }
+    }
+
+    // Fallback: check "Received Email" events for BIS-related subjects
+    console.log('No alert metric/events found, falling back to Received Email matching');
+    const receivedMetric = allMetrics.find(m =>
+      m.attributes?.name?.toLowerCase() === 'received email'
+    );
+
+    if (!receivedMetric) {
+      console.log('No "Received Email" metric found either');
       return new Map();
     }
 
     const eventsRes = await fetch(
-      `${KLAVIYO_API}/events/?filter=equals(metric_id,"${alertMetric.id}")&page[size]=100&sort=-datetime`,
+      `${KLAVIYO_API}/events/?filter=equals(metric_id,"${receivedMetric.id}")&page[size]=100&sort=-datetime`,
       { headers: klaviyoHeaders(), cache: 'no-store' }
     );
 
@@ -105,8 +154,6 @@ async function getAlertEvents() {
 
     const eventsData = await eventsRes.json();
     const events = eventsData.data || [];
-
-    // Map: profileId -> array of { productId, date }
     const byProfile = new Map();
 
     for (const event of events) {
@@ -114,17 +161,35 @@ async function getAlertEvents() {
       if (!profileId) continue;
 
       const props = event.attributes?.event_properties || {};
-      const alert = {
-        productId: props.ProductID || null,
-        date: event.attributes?.datetime || null,
-      };
+      const subject = (props.Subject || '').toLowerCase();
+      const preview = (props.$internal?.['Preview Text'] || '').toLowerCase();
 
-      if (!byProfile.has(profileId)) {
-        byProfile.set(profileId, []);
+      const isBisEmail =
+        subject.includes('back in stock') ||
+        subject.includes("it's here") ||
+        subject.includes('ready to order') ||
+        subject.includes('now available') ||
+        subject.includes('in stock') ||
+        subject.includes('restock') ||
+        subject.includes('pre-order') ||
+        subject.includes('preorder') ||
+        preview.includes('back in stock') ||
+        preview.includes('now available') ||
+        preview.includes('in stock') ||
+        preview.includes('restock');
+
+      if (isBisEmail) {
+        const alert = {
+          productId: null, // Received Email events don't have product info
+          date: event.attributes?.datetime || null,
+        };
+
+        if (!byProfile.has(profileId)) byProfile.set(profileId, []);
+        byProfile.get(profileId).push(alert);
       }
-      byProfile.get(profileId).push(alert);
     }
 
+    console.log(`Found BIS-related emails for ${byProfile.size} profiles via Received Email fallback`);
     return byProfile;
   } catch (error) {
     console.error('Error fetching alert events:', error);
@@ -302,10 +367,14 @@ export async function GET() {
       if (signups.length > 0) {
         for (const signup of signups) {
           // Check if an alert was sent for this product after signup
-          const alertSent = alerts.some(a =>
-            a.productId === signup.productId &&
-            new Date(a.date) > new Date(signup.signupDate)
-          );
+          const alertSent = alerts.some(a => {
+            const afterSignup = new Date(a.date) > new Date(signup.signupDate);
+            if (!afterSignup) return false;
+            // If alert has no productId (from Received Email fallback), any BIS email after signup counts
+            if (!a.productId) return true;
+            // Otherwise match by normalized product ID
+            return normalizeProductId(a.productId) === normalizeProductId(signup.productId);
+          });
 
           const { inventory, sku } = await getProductData(signup.productId, signup.variantId);
           const ordered = await checkIfOrdered(email, signup.productId, signup.signupDate);
