@@ -386,6 +386,15 @@ export async function GET() {
       }
     }
 
+    // Debug info
+    const debug = {
+      metricIds: metricIds,
+      bisAlertProfileCount: bisAlertsByProfile.size,
+      emailAlertProfileCount: emailAlertsByProfile.size,
+      mergedAlertProfileCount: alertsByProfile.size,
+      profileCount: profiles.length,
+    };
+
     // Build subscriber list
     const subscribers = [];
 
@@ -461,7 +470,7 @@ export async function GET() {
       return bDate - aDate;
     });
 
-    return NextResponse.json({ subscribers });
+    return NextResponse.json({ subscribers, debug });
 
   } catch (error) {
     console.error('Error:', error);
